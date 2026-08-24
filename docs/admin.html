@@ -1,0 +1,742 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin Panel — Управление</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --blue-primary: #1a73e8;
+      --blue-dark: #0d47a1;
+      --blue-light: #4fc3f7;
+      --blue-darker: #0a3d91;
+      --blue-pale: #e3f2fd;
+      --white: #ffffff;
+      --error: #d32f2f;
+      --success: #2e7d32;
+      --warning: #f57c00;
+      --rgb-anim: linear-gradient(90deg, #ff4d4d, #ffa64d, #ffff4d, #4dff4d, #4dffff, #4d4dff, #ff4dff, #ff4d4d);
+    }
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      min-height: 100vh;
+      background: linear-gradient(135deg, #0d47a1, #1a73e8);
+      background-size: 200% 200%;
+      animation: gradientShift 10s ease infinite;
+    }
+    @keyframes gradientShift {
+      0% { background-position: 0% 50%; }
+      50% { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
+    }
+    .header {
+      background: rgba(255,255,255,0.95);
+      backdrop-filter: blur(20px);
+      padding: 16px 24px;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.15);
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+    .header-left {
+      display: flex;
+      align-items: center;
+      gap: 12px;
+    }
+    .header-logo {
+      width: 44px;
+      height: 44px;
+      background: linear-gradient(135deg, #0d47a1, #4fc3f7);
+      border-radius: 12px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 22px;
+      color: white;
+    }
+    .header h1 {
+      color: var(--blue-dark);
+      font-size: 20px;
+      font-weight: 700;
+    }
+    .header-status {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      font-size: 14px;
+      color: #666;
+    }
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 50%;
+      background: var(--success);
+      animation: blink 2s infinite;
+    }
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0.4; }
+    }
+    .btn-logout {
+      padding: 8px 20px;
+      background: transparent;
+      border: 2px solid var(--blue-primary);
+      color: var(--blue-primary);
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s;
+    }
+    .btn-logout:hover {
+      background: var(--blue-primary);
+      color: white;
+    }
+    .main-content {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 32px 24px;
+    }
+    .tabs {
+      display: flex;
+      gap: 8px;
+      margin-bottom: 28px;
+      flex-wrap: wrap;
+    }
+    .tab-btn {
+      padding: 14px 28px;
+      background: rgba(255,255,255,0.15);
+      border: 2px solid rgba(255,255,255,0.3);
+      color: white;
+      border-radius: 12px;
+      font-size: 15px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s;
+      backdrop-filter: blur(10px);
+    }
+    .tab-btn:hover {
+      background: rgba(255,255,255,0.25);
+      transform: translateY(-2px);
+    }
+    .tab-btn.active {
+      background: white;
+      color: var(--blue-dark);
+      border-color: white;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+    }
+    .tab-content {
+      display: none;
+      animation: fadeIn 0.4s ease;
+    }
+    .tab-content.active {
+      display: block;
+    }
+    @keyframes fadeIn {
+      from { opacity: 0; transform: translateY(10px); }
+      to { opacity: 1; transform: translateY(0); }
+    }
+    .card {
+      background: rgba(255,255,255,0.95);
+      backdrop-filter: blur(20px);
+      border-radius: 16px;
+      padding: 28px;
+      box-shadow: 0 8px 32px rgba(0,0,0,0.15);
+      margin-bottom: 20px;
+    }
+    .card h2 {
+      color: var(--blue-dark);
+      font-size: 22px;
+      margin-bottom: 20px;
+      display: flex;
+      align-items: center;
+      gap: 10px;
+    }
+    .data-table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+    .data-table th {
+      text-align: left;
+      padding: 12px 16px;
+      background: var(--blue-pale);
+      color: var(--blue-dark);
+      font-size: 14px;
+      font-weight: 600;
+      border-radius: 8px;
+    }
+    .data-table th:first-child { border-radius: 8px 0 0 8px; }
+    .data-table th:last-child { border-radius: 0 8px 8px 0; }
+    .data-table td {
+      padding: 12px 16px;
+      border-bottom: 1px solid #f0f0f0;
+      font-size: 14px;
+      color: #333;
+    }
+    .data-table tr:hover {
+      background: rgba(26,115,232,0.05);
+    }
+    .data-table tr {
+      transition: background 0.2s;
+    }
+    .badge {
+      display: inline-block;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 12px;
+      font-weight: 600;
+    }
+    .badge-active {
+      background: #ffebee;
+      color: var(--error);
+    }
+    .badge-inactive {
+      background: #e8f5e9;
+      color: var(--success);
+    }
+    .empty-state {
+      text-align: center;
+      padding: 40px;
+      color: #999;
+      font-size: 15px;
+    }
+    .action-row {
+      display: flex;
+      gap: 12px;
+      margin-bottom: 20px;
+      flex-wrap: wrap;
+      align-items: end;
+    }
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+    .form-group label {
+      font-size: 13px;
+      font-weight: 600;
+      color: var(--blue-dark);
+    }
+    .form-group input, .form-group select {
+      padding: 10px 14px;
+      border: 2px solid #e0e0e0;
+      border-radius: 8px;
+      font-size: 14px;
+      outline: none;
+      transition: border-color 0.3s;
+    }
+    .form-group input:focus {
+      border-color: var(--blue-primary);
+    }
+    .btn-action {
+      padding: 12px 24px;
+      border: none;
+      border-radius: 8px;
+      font-size: 14px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s;
+      color: white;
+    }
+    .btn-ban {
+      background: var(--error);
+    }
+    .btn-ban:hover {
+      background: #b71c1c;
+      transform: translateY(-1px);
+    }
+    .btn-unban {
+      background: var(--success);
+    }
+    .btn-unban:hover {
+      background: #1b5e20;
+      transform: translateY(-1px);
+    }
+    .btn-primary {
+      background: var(--blue-primary);
+    }
+    .btn-primary:hover {
+      background: var(--blue-dark);
+      transform: translateY(-1px);
+    }
+    .btn-danger {
+      background: var(--warning);
+    }
+    .btn-danger:hover {
+      background: #e65100;
+    }
+    .settings-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 20px;
+    }
+    .setting-card {
+      padding: 24px;
+      background: var(--blue-pale);
+      border-radius: 12px;
+      text-align: center;
+    }
+    .setting-card h3 {
+      color: var(--blue-dark);
+      font-size: 18px;
+      margin-bottom: 12px;
+    }
+    .setting-card p {
+      color: #666;
+      font-size: 14px;
+      margin-bottom: 16px;
+    }
+    .setting-status {
+      font-size: 28px;
+      font-weight: 700;
+      margin-bottom: 16px;
+    }
+    .setting-status.on { color: var(--error); }
+    .setting-status.off { color: var(--success); }
+    .loading {
+      text-align: center;
+      padding: 40px;
+      color: #999;
+    }
+    .toast {
+      position: fixed;
+      bottom: 24px;
+      right: 24px;
+      padding: 16px 24px;
+      background: var(--blue-dark);
+      color: white;
+      border-radius: 12px;
+      font-size: 15px;
+      box-shadow: 0 8px 24px rgba(0,0,0,0.2);
+      transform: translateX(400px);
+      transition: transform 0.3s;
+      z-index: 200;
+    }
+    .toast.show {
+      transform: translateX(0);
+    }
+    .toast.error {
+      background: var(--error);
+    }
+    .toast.success {
+      background: var(--success);
+    }
+    .rgb-text {
+      background: var(--rgb-anim);
+      background-size: 300% 300%;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      background-clip: text;
+      animation: rgbFlow 3s linear infinite;
+    }
+    @keyframes rgbFlow {
+      0% { background-position: 0% 50%; }
+      100% { background-position: 300% 50%; }
+    }
+    @media (max-width: 768px) {
+      .settings-grid { grid-template-columns: 1fr; }
+      .action-row { flex-direction: column; align-items: stretch; }
+      .form-group { width: 100%; }
+      .tab-btn { flex: 1; min-width: 120px; text-align: center; }
+    }
+  </style>
+</head>
+<body>
+  <div class="header">
+    <div class="header-left">
+      <div class="header-logo">🤖</div>
+      <h1>Admin Panel</h1>
+    </div>
+    <div class="header-status">
+      <span class="status-dot"></span>
+      <span>Бот активен</span>
+      <button class="btn-logout" onclick="logout()">Выйти</button>
+    </div>
+  </div>
+
+  <div class="main-content">
+    <div class="tabs">
+      <button class="tab-btn active" onclick="switchTab('logs')">📋 Логи</button>
+      <button class="tab-btn" onclick="switchTab('ids')">👥 Айди</button>
+      <button class="tab-btn" onclick="switchTab('bans')">🚫 Баны</button>
+      <button class="tab-btn" onclick="switchTab('settings')">⚙️ Настройки</button>
+    </div>
+
+    <!-- Логи -->
+    <div class="tab-content active" id="tab-logs">
+      <div class="card">
+        <h2>📋 Логи команд</h2>
+        <div class="action-row">
+          <button class="btn-action btn-primary" onclick="loadLogs()">Обновить</button>
+        </div>
+        <div id="logsContent">
+          <div class="loading">Загрузка...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Айди -->
+    <div class="tab-content" id="tab-ids">
+      <div class="card">
+        <h2>👥 Пользователи бота</h2>
+        <div class="action-row">
+          <button class="btn-action btn-primary" onclick="loadIds()">Обновить</button>
+        </div>
+        <div id="idsContent">
+          <div class="loading">Загрузка...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Баны -->
+    <div class="tab-content" id="tab-bans">
+      <div class="card">
+        <h2>🚫 Выдать бан</h2>
+        <div class="action-row">
+          <div class="form-group">
+            <label>ID пользователя</label>
+            <input type="number" id="banId" placeholder="123456789" />
+          </div>
+          <div class="form-group">
+            <label>Время</label>
+            <input type="text" id="banTime" placeholder="24ч" />
+          </div>
+          <div class="form-group">
+            <label>Причина</label>
+            <input type="text" id="banReason" placeholder="Спам" />
+          </div>
+          <button class="btn-action btn-ban" onclick="issueBan()">Забанить</button>
+        </div>
+      </div>
+      <div class="card">
+        <h2>🔓 Снять бан</h2>
+        <div class="action-row">
+          <div class="form-group">
+            <label>ID пользователя</label>
+            <input type="number" id="unbanId" placeholder="123456789" />
+          </div>
+          <div class="form-group">
+            <label>Причина</label>
+            <input type="text" id="unbanReason" placeholder="Ошибка" />
+          </div>
+          <button class="btn-action btn-unban" onclick="revokeBan()">Разбанить</button>
+        </div>
+      </div>
+      <div class="card">
+        <h2>📋 Список банов</h2>
+        <div class="action-row">
+          <button class="btn-action btn-primary" onclick="loadBans()">Обновить</button>
+        </div>
+        <div id="bansContent">
+          <div class="loading">Загрузка...</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Настройки -->
+    <div class="tab-content" id="tab-settings">
+      <div class="card">
+        <h2>⚙️ Настройки бота</h2>
+        <div class="settings-grid">
+          <div class="setting-card">
+            <h3>🛠️ Технические работы</h3>
+            <div class="setting-status off" id="techWorksStatus">ВЫКЛ</div>
+            <p>Когда включены, бот не отвечает обычным пользователям</p>
+            <div class="action-row" style="justify-content: center;">
+              <div class="form-group">
+                <label>Время (для включения)</label>
+                <input type="text" id="techWorksTime" placeholder="2ч" style="width: 120px;" />
+              </div>
+              <button class="btn-action btn-danger" id="techWorksBtn" onclick="toggleTechWorks()">Включить</button>
+            </div>
+          </div>
+          <div class="setting-card">
+            <h3>📊 Статистика</h3>
+            <p>Всего пользователей</p>
+            <div class="setting-status" id="statUsers" style="color: var(--blue-primary)">—</div>
+            <p>Всего логов</p>
+            <div class="setting-status" id="statLogs" style="color: var(--blue-primary)">—</div>
+            <p>Активных банов</p>
+            <div class="setting-status" id="statBans" style="color: var(--error)">—</div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <div class="toast" id="toast"></div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script>
+    const SUPABASE_URL = 'https://0ec90b57d6e95fcbda19832f.supabase.co';
+    const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJib2x0IiwicmVmIjoiMGVjOTBiNTdkNmU5NWZjYmRhMTk4MzJmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg4ODE1NzQsImV4cCI6MTc1ODg4MTU3NH0.9I8-U0x86Ak8t2DGaIk0HfvTSLsAyzdnz-Nw00mMkKw';
+    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+    (async () => {
+      const savedKey = sessionStorage.getItem('adminKey');
+      if (!savedKey) {
+        window.location.href = 'index.html';
+        return;
+      }
+      const now = new Date().toISOString();
+      const { data } = await supabase
+        .from('bot_keys')
+        .select('*')
+        .eq('key', savedKey)
+        .eq('active', true)
+        .gt('expires_at', now)
+        .maybeSingle();
+      if (!data) {
+        sessionStorage.removeItem('adminKey');
+        window.location.href = 'index.html';
+        return;
+      }
+      loadLogs();
+      loadStats();
+    })();
+
+    function logout() {
+      sessionStorage.removeItem('adminKey');
+      window.location.href = 'index.html';
+    }
+
+    function switchTab(tab) {
+      document.querySelectorAll('.tab-content').forEach(t => t.classList.remove('active'));
+      document.querySelectorAll('.tab-btn').forEach(t => t.classList.remove('active'));
+      document.getElementById('tab-' + tab).classList.add('active');
+      event.target.classList.add('active');
+
+      if (tab === 'logs') loadLogs();
+      else if (tab === 'ids') loadIds();
+      else if (tab === 'bans') loadBans();
+      else if (tab === 'settings') { loadTechWorks(); loadStats(); }
+    }
+
+    function showToast(msg, type = '') {
+      const toast = document.getElementById('toast');
+      toast.textContent = msg;
+      toast.className = 'toast show ' + type;
+      setTimeout(() => { toast.className = 'toast ' + type; }, 3000);
+    }
+
+    function escapeHtml(text) {
+      if (!text) return '';
+      const div = document.createElement('div');
+      div.textContent = text;
+      return div.innerHTML;
+    }
+
+    function formatTime(iso) {
+      return new Date(iso).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' });
+    }
+
+    async function loadLogs() {
+      const el = document.getElementById('logsContent');
+      el.innerHTML = '<div class="loading">Загрузка...</div>';
+      try {
+        const { data, error } = await supabase
+          .from('bot_logs')
+          .select('*')
+          .order('created_at', { ascending: false })
+          .limit(100);
+        if (error || !data || data.length === 0) {
+          el.innerHTML = '<div class="empty-state">📭 Логи отсутствуют</div>';
+          return;
+        }
+        let html = '<table class="data-table"><thead><tr><th>ID</th><th>User ID</th><th>Username</th><th>Команда</th><th>Время (МСК)</th></tr></thead><tbody>';
+        for (const log of data) {
+          html += `<tr><td>${log.id}</td><td>${log.user_id}</td><td>${escapeHtml(log.username ? '@' + log.username : '—')}</td><td>${escapeHtml(log.command)}</td><td>${formatTime(log.created_at)}</td></tr>`;
+        }
+        html += '</tbody></table>';
+        el.innerHTML = html;
+      } catch (e) {
+        el.innerHTML = '<div class="empty-state">❌ Ошибка загрузки</div>';
+      }
+    }
+
+    async function loadIds() {
+      const el = document.getElementById('idsContent');
+      el.innerHTML = '<div class="loading">Загрузка...</div>';
+      try {
+        const { data, error } = await supabase
+          .from('bot_users')
+          .select('*')
+          .order('last_seen', { ascending: false });
+        if (error || !data || data.length === 0) {
+          el.innerHTML = '<div class="empty-state">📭 Пользователи отсутствуют</div>';
+          return;
+        }
+        let html = '<table class="data-table"><thead><tr><th>ID</th><th>User ID</th><th>Username</th><th>Имя</th><th>Последний визит (МСК)</th></tr></thead><tbody>';
+        for (const u of data) {
+          html += `<tr><td>${u.id}</td><td>${u.user_id}</td><td>${escapeHtml(u.username ? '@' + u.username : '—')}</td><td>${escapeHtml(u.first_name || '—')}</td><td>${formatTime(u.last_seen)}</td></tr>`;
+        }
+        html += '</tbody></table>';
+        el.innerHTML = html;
+      } catch (e) {
+        el.innerHTML = '<div class="empty-state">❌ Ошибка загрузки</div>';
+      }
+    }
+
+    async function loadBans() {
+      const el = document.getElementById('bansContent');
+      el.innerHTML = '<div class="loading">Загрузка...</div>';
+      try {
+        const { data, error } = await supabase
+          .from('bot_bans')
+          .select('*')
+          .order('banned_at', { ascending: false });
+        if (error || !data || data.length === 0) {
+          el.innerHTML = '<div class="empty-state">📭 Баны отсутствуют</div>';
+          return;
+        }
+        let html = '<table class="data-table"><thead><tr><th>ID</th><th>User ID</th><th>Причина</th><th>Время</th><th>Статус</th><th>Дата бана (МСК)</th><th>Разбан (МСК)</th></tr></thead><tbody>';
+        for (const b of data) {
+          const isActive = b.active && new Date(b.unban_at) > new Date();
+          html += `<tr><td>${b.id}</td><td>${b.user_id}</td><td>${escapeHtml(b.reason)}</td><td>${escapeHtml(b.ban_duration)}</td><td><span class="badge ${isActive ? 'badge-active' : 'badge-inactive'}">${isActive ? 'Активен' : 'Снят'}</span></td><td>${formatTime(b.banned_at)}</td><td>${formatTime(b.unban_at)}</td></tr>`;
+        }
+        html += '</tbody></table>';
+        el.innerHTML = html;
+      } catch (e) {
+        el.innerHTML = '<div class="empty-state">❌ Ошибка загрузки</div>';
+      }
+    }
+
+    async function issueBan() {
+      const id = parseInt(document.getElementById('banId').value, 10);
+      const time = document.getElementById('banTime').value.trim();
+      const reason = document.getElementById('banReason').value.trim();
+      if (!id || !time || !reason) {
+        showToast('Заполните все поля', 'error');
+        return;
+      }
+      const match = time.match(/^(\d+)([мчдс]|min|h|d|s)$/i);
+      if (!match) {
+        showToast('Неверный формат времени (пример: 24ч)', 'error');
+        return;
+      }
+      const num = parseInt(match[1], 10);
+      const unit = match[2].toLowerCase();
+      const mult = { 'м': 60000, 'min': 60000, 'ч': 3600000, 'h': 3600000, 'д': 86400000, 'd': 86400000, 'с': 1000, 's': 1000 };
+      const ms = num * mult[unit];
+      const now = new Date();
+      const unbanAt = new Date(now.getTime() + ms);
+      try {
+        await supabase.from('bot_bans').upsert({
+          user_id: id, reason, ban_duration: time,
+          banned_at: now.toISOString(), unban_at: unbanAt.toISOString(), active: true
+        }, { onConflict: 'user_id' });
+        showToast('Пользователь забанен', 'success');
+        document.getElementById('banId').value = '';
+        document.getElementById('banTime').value = '';
+        document.getElementById('banReason').value = '';
+        loadBans();
+      } catch (e) {
+        showToast('Ошибка при бане', 'error');
+      }
+    }
+
+    async function revokeBan() {
+      const id = parseInt(document.getElementById('unbanId').value, 10);
+      const reason = document.getElementById('unbanReason').value.trim();
+      if (!id || !reason) {
+        showToast('Заполните все поля', 'error');
+        return;
+      }
+      try {
+        const { data } = await supabase
+          .from('bot_bans')
+          .select('*')
+          .eq('user_id', id)
+          .eq('active', true)
+          .maybeSingle();
+        if (!data) {
+          showToast('Пользователь не в бане', 'error');
+          return;
+        }
+        await supabase.from('bot_bans').update({ active: false }).eq('user_id', id).eq('active', true);
+        showToast('Пользователь разбанен', 'success');
+        document.getElementById('unbanId').value = '';
+        document.getElementById('unbanReason').value = '';
+        loadBans();
+      } catch (e) {
+        showToast('Ошибка при разбане', 'error');
+      }
+    }
+
+    async function loadTechWorks() {
+      try {
+        const { data } = await supabase.from('bot_settings').select('*').eq('id', 1).maybeSingle();
+        const statusEl = document.getElementById('techWorksStatus');
+        const btn = document.getElementById('techWorksBtn');
+        if (data && data.tech_works && data.tech_works_until && new Date(data.tech_works_until) > new Date()) {
+          statusEl.textContent = 'ВКЛ';
+          statusEl.className = 'setting-status on';
+          btn.textContent = 'Выключить';
+          btn.onclick = () => toggleTechWorksOff();
+        } else {
+          statusEl.textContent = 'ВЫКЛ';
+          statusEl.className = 'setting-status off';
+          btn.textContent = 'Включить';
+          btn.onclick = () => toggleTechWorks();
+        }
+      } catch (e) { }
+    }
+
+    async function toggleTechWorks() {
+      const time = document.getElementById('techWorksTime').value.trim();
+      if (!time) {
+        showToast('Укажите время (пример: 2ч)', 'error');
+        return;
+      }
+      const match = time.match(/^(\d+)([мчдс]|min|h|d|s)$/i);
+      if (!match) {
+        showToast('Неверный формат времени', 'error');
+        return;
+      }
+      const num = parseInt(match[1], 10);
+      const unit = match[2].toLowerCase();
+      const mult = { 'м': 60000, 'min': 60000, 'ч': 3600000, 'h': 3600000, 'д': 86400000, 'd': 86400000, 'с': 1000, 's': 1000 };
+      const ms = num * mult[unit];
+      const until = new Date(Date.now() + ms).toISOString();
+      try {
+        await supabase.from('bot_settings').update({
+          tech_works: true, tech_works_until: until, updated_at: new Date().toISOString()
+        }).eq('id', 1);
+        showToast('Тех-работы включены', 'success');
+        loadTechWorks();
+      } catch (e) {
+        showToast('Ошибка', 'error');
+      }
+    }
+
+    async function toggleTechWorksOff() {
+      try {
+        await supabase.from('bot_settings').update({
+          tech_works: false, tech_works_until: null, updated_at: new Date().toISOString()
+        }).eq('id', 1);
+        showToast('Тех-работы выключены', 'success');
+        loadTechWorks();
+      } catch (e) {
+        showToast('Ошибка', 'error');
+      }
+    }
+
+    async function loadStats() {
+      try {
+        const [{ data: users }, { data: logs }, { data: bans }] = await Promise.all([
+          supabase.from('bot_users').select('*', { count: 'exact', head: true }),
+          supabase.from('bot_logs').select('*', { count: 'exact', head: true }),
+          supabase.from('bot_bans').select('*', { count: 'exact', head: true }).eq('active', true)
+        ]);
+        document.getElementById('statUsers').textContent = users ? users.length : 0;
+        document.getElementById('statLogs').textContent = logs ? logs.length : 0;
+        document.getElementById('statBans').textContent = bans ? bans.length : 0;
+      } catch (e) { }
+    }
+  </script>
+</body>
+</html>
