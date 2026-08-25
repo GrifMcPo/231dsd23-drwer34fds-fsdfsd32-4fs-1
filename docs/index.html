@@ -1,0 +1,297 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Admin Panel — Вход</title>
+  <style>
+    * { margin: 0; padding: 0; box-sizing: border-box; }
+    :root {
+      --blue-primary: #1a73e8;
+      --blue-dark: #0d47a1;
+      --blue-light: #4fc3f7;
+      --blue-darker: #0a3d91;
+      --white: #ffffff;
+      --bg-gradient: linear-gradient(135deg, #0d47a1, #1a73e8, #4fc3f7);
+      --rgb-anim: linear-gradient(90deg, #ff4d4d, #ffa64d, #ffff4d, #4dff4d, #4dffff, #4d4dff, #ff4dff, #ff4d4d);
+    }
+    body {
+      font-family: 'Segoe UI', system-ui, -apple-system, sans-serif;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: var(--bg-gradient);
+      background-size: 400% 400%;
+      animation: gradientShift 8s ease infinite;
+      overflow: hidden;
+    }
+    @keyframes gradientShift {
+      0% { background-position: 0% 50%; }
+      50% { background-position: 100% 50%; }
+      100% { background-position: 0% 50%; }
+    }
+    .login-container {
+      background: rgba(255, 255, 255, 0.95);
+      backdrop-filter: blur(20px);
+      border-radius: 24px;
+      padding: 48px 40px;
+      width: 90%;
+      max-width: 440px;
+      box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+      text-align: center;
+      position: relative;
+      z-index: 1;
+    }
+    .login-container::before {
+      content: '';
+      position: absolute;
+      top: -2px; left: -2px; right: -2px; bottom: -2px;
+      background: var(--rgb-anim);
+      background-size: 300% 300%;
+      border-radius: 26px;
+      z-index: -1;
+      animation: rgbBorder 4s linear infinite;
+      opacity: 0.7;
+    }
+    @keyframes rgbBorder {
+      0% { background-position: 0% 50%; }
+      100% { background-position: 300% 50%; }
+    }
+    .logo {
+      width: 72px;
+      height: 72px;
+      margin: 0 auto 24px;
+      background: var(--bg-gradient);
+      border-radius: 18px;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      font-size: 36px;
+      color: white;
+      animation: pulse 2s ease-in-out infinite;
+    }
+    @keyframes pulse {
+      0%, 100% { transform: scale(1); box-shadow: 0 0 0 0 rgba(26,115,232,0.4); }
+      50% { transform: scale(1.05); box-shadow: 0 0 0 12px rgba(26,115,232,0); }
+    }
+    h1 {
+      color: var(--blue-dark);
+      font-size: 28px;
+      font-weight: 700;
+      margin-bottom: 8px;
+    }
+    .subtitle {
+      color: #666;
+      font-size: 15px;
+      margin-bottom: 32px;
+    }
+    .input-group {
+      position: relative;
+      margin-bottom: 24px;
+      text-align: left;
+    }
+    .input-group label {
+      display: block;
+      color: var(--blue-dark);
+      font-size: 14px;
+      font-weight: 600;
+      margin-bottom: 8px;
+    }
+    .input-group input {
+      width: 100%;
+      padding: 14px 18px;
+      border: 2px solid #e0e0e0;
+      border-radius: 12px;
+      font-size: 16px;
+      transition: all 0.3s ease;
+      outline: none;
+      font-family: monospace;
+      letter-spacing: 1px;
+    }
+    .input-group input:focus {
+      border-color: var(--blue-primary);
+      box-shadow: 0 0 0 4px rgba(26,115,232,0.15);
+    }
+    .btn-login {
+      width: 100%;
+      padding: 16px;
+      background: var(--blue-primary);
+      color: white;
+      border: none;
+      border-radius: 12px;
+      font-size: 17px;
+      font-weight: 600;
+      cursor: pointer;
+      transition: all 0.3s ease;
+      position: relative;
+      overflow: hidden;
+    }
+    .btn-login:hover {
+      background: var(--blue-dark);
+      transform: translateY(-2px);
+      box-shadow: 0 8px 24px rgba(13,71,161,0.3);
+    }
+    .btn-login:active {
+      transform: translateY(0);
+    }
+    .btn-login::after {
+      content: '';
+      position: absolute;
+      top: 50%; left: 50%;
+      width: 0; height: 0;
+      border-radius: 50%;
+      background: rgba(255,255,255,0.3);
+      transform: translate(-50%,-50%);
+      transition: width 0.6s, height 0.6s;
+    }
+    .btn-login:active::after {
+      width: 300px; height: 300px;
+    }
+    .btn-login:disabled {
+      opacity: 0.6;
+      cursor: not-allowed;
+    }
+    .error-msg {
+      color: #d32f2f;
+      font-size: 14px;
+      margin-top: 16px;
+      min-height: 20px;
+      transition: all 0.3s;
+    }
+    .success-msg {
+      color: #2e7d32;
+      font-size: 14px;
+      margin-top: 16px;
+      min-height: 20px;
+    }
+    .info-box {
+      margin-top: 28px;
+      padding: 14px;
+      background: rgba(26,115,232,0.08);
+      border-radius: 10px;
+      font-size: 13px;
+      color: var(--blue-darker);
+      line-height: 1.5;
+    }
+    .loading-spinner {
+      display: inline-block;
+      width: 18px;
+      height: 18px;
+      border: 2px solid rgba(255,255,255,0.3);
+      border-top-color: white;
+      border-radius: 50%;
+      animation: spin 0.8s linear infinite;
+    }
+    @keyframes spin {
+      to { transform: rotate(360deg); }
+    }
+  </style>
+</head>
+<body>
+  <div class="login-container">
+    <div class="logo">🔐</div>
+    <h1>Admin Panel</h1>
+    <p class="subtitle">Введите ключ доступа для входа</p>
+
+    <div class="input-group">
+      <label>Ключ доступа</label>
+      <input type="text" id="keyInput" placeholder="ADMIN_XXXXX" autocomplete="off" />
+    </div>
+
+    <button class="btn-login" id="loginBtn" onclick="login()">
+      <span id="btnText">Войти</span>
+    </button>
+
+    <div class="error-msg" id="errorMsg"></div>
+
+    <div class="info-box">
+      💡 Ключ выдаётся ботом командой <strong>/key</strong> или <strong>.key</strong>.<br>
+      Ключ действует 10 часов после выдачи.
+    </div>
+  </div>
+
+  <script src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script>
+    const SUPABASE_URL = 'https://0ec90b57d6e95fcbda19832f.supabase.co';
+    const SUPABASE_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJib2x0IiwicmVmIjoiMGVjOTBiNTdkNmU5NWZjYmRhMTk4MzJmIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTg4ODE1NzQsImV4cCI6MTc1ODg4MTU3NH0.9I8-U0x86Ak8t2DGaIk0HfvTSLsAyzdnz-Nw00mMkKw';
+
+    const supabase = window.supabase.createClient(SUPABASE_URL, SUPABASE_KEY);
+
+    // Проверяем сохранённый ключ
+    (async () => {
+      const savedKey = sessionStorage.getItem('adminKey');
+      if (savedKey) {
+        const valid = await checkKey(savedKey);
+        if (valid) {
+          window.location.href = 'admin.html';
+        }
+      }
+    })();
+
+    async function checkKey(key) {
+      try {
+        const now = new Date().toISOString();
+        const { data, error } = await supabase
+          .from('bot_keys')
+          .select('*')
+          .eq('key', key)
+          .eq('active', true)
+          .gt('expires_at', now)
+          .maybeSingle();
+
+        if (error || !data) return false;
+        return true;
+      } catch (e) {
+        return false;
+      }
+    }
+
+    async function login() {
+      const key = document.getElementById('keyInput').value.trim();
+      const errorMsg = document.getElementById('errorMsg');
+      const btn = document.getElementById('loginBtn');
+      const btnText = document.getElementById('btnText');
+
+      errorMsg.textContent = '';
+
+      if (!key) {
+        errorMsg.textContent = 'Введите ключ доступа';
+        return;
+      }
+
+      btn.disabled = true;
+      btnText.innerHTML = '<span class="loading-spinner"></span>';
+
+      const valid = await checkKey(key);
+
+      if (valid) {
+        sessionStorage.setItem('adminKey', key);
+        btnText.textContent = '✓ Успех!';
+        setTimeout(() => {
+          window.location.href = 'admin.html';
+        }, 500);
+      } else {
+        errorMsg.textContent = '❌ Неверный или истекший ключ';
+        btn.disabled = false;
+        btnText.textContent = 'Войти';
+        // Shake animation
+        const container = document.querySelector('.login-container');
+        container.style.animation = 'shake 0.4s';
+        setTimeout(() => { container.style.animation = ''; }, 400);
+      }
+    }
+
+    document.getElementById('keyInput').addEventListener('keypress', (e) => {
+      if (e.key === 'Enter') login();
+    });
+  </script>
+  <style>
+    @keyframes shake {
+      0%, 100% { transform: translateX(0); }
+      25% { transform: translateX(-10px); }
+      75% { transform: translateX(10px); }
+    }
+  </style>
+</body>
+</html>
