@@ -1,21 +1,64 @@
 import TelegramBot from 'node-telegram-bot-api';
-import { createClient } from '@supabase/supabase-js';
+import fs from 'fs/promises';
+import path from 'path';
+import { fileURLToPath } from 'url';
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
 
 const BOT_TOKEN = process.env.BOT_TOKEN;
 const ADMIN_ID = parseInt(process.env.ADMIN_ID || '0', 10);
-const SUPABASE_URL = process.env.SUPABASE_URL || process.env.VITE_SUPABASE_URL;
-const SUPABASE_KEY = process.env.SUPABASE_ANON_KEY || process.env.VITE_SUPABASE_ANON_KEY;
 
 if (!BOT_TOKEN) {
   console.error('BOT_TOKEN не найден в переменных окружения');
   process.exit(1);
 }
 
-const supabase = createClient(SUPABASE_URL, SUPABASE_KEY);
-
 const bot = new TelegramBot(BOT_TOKEN, { polling: true });
 
+// Файлы для хранения данных
+const DATA_FILES = {
+  bans: 'banlist.json',
+  logs: 'logs.json',
+  users: 'idlist.json',
+  keys: 'keys.json',
+  settings: 'settings.json'
+};
+
+// Инициализация файлов
+async function initFiles() {
+  for (const [key, file] of Object.entries(DATA_FILES)) {
+    try {
+      await fs.access(file);
+    } catch {
+      if (key === 'bans' || key === 'logs') {
+        await fs.writeFile(file, JSON.stringify([], null, 2));
+      } else {
+        await fs.writeFile(file, JSON.stringify({}, null, 2));
+      }
+    }
+  }
+}
+
+// Чтение JSON
+async function readJSON(file) {
+  try {
+    const data = await fs.readFile(file, 'utf8');
+    return JSON.parse(data);
+  } catch {
+    return file === 'banlist.json' || file === 'logs.json' ? [] : {};
+  }
+}
+
+// Запись JSON
+async function writeJSON(file, data) {
+  await fs.writeFile(file, JSON.stringify(data, null, 2));
+}
+
 const awaitingInput = new Map();
+let maintenanceMode = false;
+let maintenanceUntil = null;
+let bannedNotified = new Set();
 
 // ─── Утилиты ───
 
@@ -32,13 +75,22 @@ function progressBar(percent) {
   return '█'.repeat(filled) + '░'.repeat(10 - filled);
 }
 
+function sleep(ms) {
+  return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+// ─── Работа с данными ───
+
 async function logCommand(userId, username, command) {
   try {
-    await supabase.from('bot_logs').insert({
-      user_id: userId,
-      username: username || null,
-      command: command
+    const logs = await readJSON(DATA_FILES.logs);
+    if (!logs[userId]) logs[userId] = [];
+    logs[userId].push({
+      time: new Date().toISOString(),
+      command: command.slice(0, 500)
     });
+    if (logs[userId].length > 1000) logs[userId] = logs[userId].slice(-1000);
+    await writeJSON(DATA_FILES.logs, logs);
   } catch (e) {
     console.error('Ошибка логирования:', e.message);
   }
@@ -46,12 +98,15 @@ async function logCommand(userId, username, command) {
 
 async function saveUser(userId, username, firstName) {
   try {
-    await supabase.from('bot_users').upsert({
-      user_id: userId,
-      username: username || null,
-      first_name: firstName || null,
-      last_seen: new Date().toISOString()
-    }, { onConflict: 'user_id' });
+    const users = await readJSON(DATA_FILES.users);
+    if (!users[userId]) {
+      users[userId] = {
+        username: username || null,
+        first_name: firstName || null,
+        last_seen: new Date().toISOString()
+      };
+      await writeJSON(DATA_FILES.users, users);
+    }
   } catch (e) {
     console.error('Ошибка сохранения юзера:', e.message);
   }
@@ -59,15 +114,15 @@ async function saveUser(userId, username, firstName) {
 
 async function isBanned(userId) {
   try {
+    const bans = await readJSON(DATA_FILES.bans);
     const now = new Date().toISOString();
-    const { data } = await supabase
-      .from('bot_bans')
-      .select('*')
-      .eq('user_id', userId)
-      .eq('active', true)
-      .gt('unban_at', now)
-      .maybeSingle();
-    return data;
+    for (const ban of bans) {
+      if (ban.user_id === userId) {
+        if (ban.forever) return ban;
+        if (now < ban.unban_at) return ban;
+      }
+    }
+    return null;
   } catch (e) {
     return null;
   }
@@ -75,12 +130,12 @@ async function isBanned(userId) {
 
 async function checkExpiredBans() {
   try {
+    const bans = await readJSON(DATA_FILES.bans);
     const now = new Date().toISOString();
-    await supabase
-      .from('bot_bans')
-      .update({ active: false })
-      .eq('active', true)
-      .lt('unban_at', now);
+    const activeBans = bans.filter(b => b.forever || now < b.unban_at);
+    if (activeBans.length !== bans.length) {
+      await writeJSON(DATA_FILES.bans, activeBans);
+    }
   } catch (e) {
     console.error('Ошибка проверки банов:', e.message);
   }
@@ -88,39 +143,28 @@ async function checkExpiredBans() {
 
 async function getTechWorks() {
   try {
-    const { data } = await supabase
-      .from('bot_settings')
-      .select('*')
-      .eq('id', 1)
-      .maybeSingle();
-
-    if (data && data.tech_works && data.tech_works_until) {
-      if (new Date(data.tech_works_until) > new Date()) {
-        return { active: true, until: data.tech_works_until };
+    const settings = await readJSON(DATA_FILES.settings);
+    if (settings.maintenance && settings.maintenance_until) {
+      if (new Date(settings.maintenance_until) > new Date()) {
+        return { active: true, until: settings.maintenance_until };
       } else {
-        await supabase
-          .from('bot_settings')
-          .update({ tech_works: false, tech_works_until: null })
-          .eq('id', 1);
-        return { active: false };
+        settings.maintenance = false;
+        settings.maintenance_until = null;
+        await writeJSON(DATA_FILES.settings, settings);
       }
     }
     return { active: false };
-  } catch (e) {
+  } catch {
     return { active: false };
   }
 }
 
 async function setTechWorks(active, until) {
   try {
-    await supabase
-      .from('bot_settings')
-      .update({
-        tech_works: active,
-        tech_works_until: until || null,
-        updated_at: new Date().toISOString()
-      })
-      .eq('id', 1);
+    const settings = await readJSON(DATA_FILES.settings);
+    settings.maintenance = active;
+    settings.maintenance_until = until || null;
+    await writeJSON(DATA_FILES.settings, settings);
   } catch (e) {
     console.error('Ошибка настройки тех-работ:', e.message);
   }
@@ -176,7 +220,7 @@ function formatAnimationStage(stage) {
     const p = stage.percents[i];
     const bar = progressBar(p);
     const check = stage.checks[i] ? ' ✅' : '';
-    text += `📡 Этап #${i + 1}... ${bar} ${p}%${check}\n`;
+    text += `📡 Сервер #${i + 1}... ${bar} ${p}%${check}\n`;
   }
   if (stage.final) {
     text += `\n📊 Сбор данных...\n⏳ Формирование результата...`;
@@ -186,63 +230,72 @@ function formatAnimationStage(stage) {
   return text;
 }
 
-function sleep(ms) {
-  return new Promise(resolve => setTimeout(resolve, ms));
-}
-
 // ─── Результаты функций ───
 
 function formatResult1(data) {
-  return `<b>✅ РЕЗУЛЬТАТ ОБРАБОТКИ</b>
+  return `<b>✅ РЕЗУЛЬТАТ ПРОБИВА IP</b>
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
-📥 Входные данные: <code>${data}</code>
-📊 Статус: Успешно обработано
-🔍 Найдено совпадений: 3
-📂 Категория: Общие данные
-⚡ Время обработки: 0.8 сек
+🌐 IP-адрес: <code>${data || '185.234.xx.xx'}</code>
+🌍 Город: Москва
+🏙️ Область: Московская область
+🇷🇺 Страна: Россия
+📍 Координаты: 55.7558, 37.6173
+🏠 Адрес: ул. Тверская, д. 1
+📡 Оператор: ООО «Ростелеком»
+🕒 Часовой пояс: Europe/Moscow
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
-🛡️ ПРОВЕРКА
+🛡️ БЕЗОПАСНОСТЬ
 
-✅ Данные валидны: ДА
-✅ Формат корректен: ДА
-📊 Использовано этапов: 5/5
+⚠️ IP в чёрном списке: ❌ НЕТ
+🚫 IP в базе мошенников: ❌ НЕТ
+🕵️ IP в базе скамеров: ❌ НЕТ
+✅ Доверенность IP: 95%
+📊 Использовано серверов: 20/20
 ━━━━━━━━━━━━━━━━━━━━━━━━━━`;
 }
 
 function formatResult2(data) {
-  return `<b>✅ РЕЗУЛЬТАТ ПРОВЕРКИ ДАННЫХ</b>
+  return `<b>✅ РЕЗУЛЬТАТ ПРОБИВА НОМЕРА</b>
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
-📥 Входные данные: <code>${data}</code>
-📊 Статус: Проверено
-🔍 Результат проверки: Соответствует формату
-📂 Тип данных: Текстовые
-⚡ Время проверки: 0.6 сек
+📱 Номер: <code>${data || '+7 999 123-45-67'}</code>
+📡 Оператор: МТС
+🌍 Регион: Московская область
+🏙️ Город: Москва
+📊 Тип номера: Мобильный
+🕒 Часовой пояс: Europe/Moscow
+🇷🇺 Страна: Россия
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
-🛡️ ПРОВЕРКА
+🛡️ БЕЗОПАСНОСТЬ
 
-✅ Данные валидны: ДА
-✅ Формат корректен: ДА
-📊 Использовано этапов: 5/5
+⚠️ Номер в чёрном списке: ❌ НЕТ
+🚫 Номер в базе мошенников: ❌ НЕТ
+🕵️ Номер в базе скамеров: ❌ НЕТ
+✅ Доверенность номера: 88%
+📊 Использовано серверов: 20/20
 ━━━━━━━━━━━━━━━━━━━━━━━━━━`;
 }
 
 function formatResult3(data) {
-  return `<b>✅ ОТЧЁТ СФОРМИРОВАН</b>
+  return `<b>✅ РЕЗУЛЬТАТ ПРОБИВА USERNAME</b>
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
-📥 Входные данные: <code>${data}</code>
-📊 Статус: Отчёт готов
-📄 Объём отчёта: 1 страница
-📂 Формат: Текстовый
-⚡ Время формирования: 1.2 сек
+👤 Username: <code>${data || '@example_user'}</code>
+🆔 ID: 123456789
+📛 Имя: Алексей Смирнов
+📅 Дата регистрации: 12.05.2020
+🌍 Язык интерфейса: Русский
+🔍 Активность: высокая
+📱 Привязан к номеру: +7 999 123-45-67
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
-🛡️ ПРОВЕРКА
+🛡️ БЕЗОПАСНОСТЬ
 
-✅ Данные валидны: ДА
-✅ Формат корректен: ДА
-📊 Использовано этапов: 5/5
+⚠️ Username в чёрном списке: ❌ НЕТ
+🚫 Аккаунт в базе мошенников: ❌ НЕТ
+🕵️ Аккаунт в базе скамеров: ❌ НЕТ
+✅ Доверенность аккаунта: 82%
+📊 Использовано серверов: 20/20
 ━━━━━━━━━━━━━━━━━━━━━━━━━━`;
 }
 
@@ -251,9 +304,9 @@ function formatResult3(data) {
 const menuKeyboard = {
   reply_markup: {
     inline_keyboard: [
-      [{ text: '1 — Функция 1', callback_data: 'func1' }],
-      [{ text: '2 — Функция 2', callback_data: 'func2' }],
-      [{ text: '3 — Функция 3', callback_data: 'func3' }]
+      [{ text: '1️⃣ Пробив IP', callback_data: 'func1' }],
+      [{ text: '2️⃣ Пробив номера', callback_data: 'func2' }],
+      [{ text: '3️⃣ Пробив юзера (@)', callback_data: 'func3' }]
     ]
   }
 };
@@ -261,11 +314,11 @@ const menuKeyboard = {
 const helpText = `📚 ДОСТУПНЫЕ КОМАНДЫ
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
-🔍 ОСНОВНЫЕ
+🔍 ПРОБИВ
 
-.info — получить информацию
-.check — проверить данные
-.report — сформировать отчёт
+.whois ip [IP] — пробив IP-адреса
+.whois n [номер] — пробив номера телефона
+.whois qz [@username] — пробив Telegram-юзернейма
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 ⚡ ДОПОЛНИТЕЛЬНО
@@ -275,8 +328,10 @@ const helpText = `📚 ДОСТУПНЫЕ КОМАНДЫ
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 🛡️ НАКАЗАНИЯ (PLUS)
 
-.ban (I) (T) (R) — Выдать бан в БОТЕ!
-.unban (I) (R) — Снять блокировку в БОТЕ!
+.ban (ID) (TIME) (REASON) — Выдать бан
+  TIME: 30m, 2h, 1h30m, 7d, -1w (навсегда)
+.unban (ID) (REASON) — Снять блокировку
+.chkban (ID) — Проверить бан пользователя
 
 ━━━━━━━━━━━━━━━━━━━━━━━━━━
 📌 .команды — в чатах с собеседниками
@@ -296,20 +351,45 @@ async function tryDeleteMessage(chatId, messageId) {
   } catch (e) { }
 }
 
-// ─── Бан/Разбан ───
+// ─── Парсер времени ───
 
 function parseDuration(durationStr) {
-  const match = durationStr.match(/^(\d+)([мчдс]|min|h|d|s)$/i);
-  if (!match) return null;
-  const num = parseInt(match[1], 10);
-  const unit = match[2].toLowerCase();
-  const multipliers = { 'м': 60000, 'min': 60000, 'ч': 3600000, 'h': 3600000, 'д': 86400000, 'd': 86400000, 'с': 1000, 's': 1000 };
-  return num * multipliers[unit];
+  if (durationStr === '-1w' || durationStr === 'forever' || durationStr === 'навсегда') {
+    return -1; // Бесконечный бан
+  }
+  
+  let totalMinutes = 0;
+  const str = durationStr.toLowerCase();
+  
+  // Парсим часы
+  const hMatch = str.match(/(\d+)h/);
+  if (hMatch) totalMinutes += parseInt(hMatch[1]) * 60;
+  
+  // Парсим минуты
+  const mMatch = str.match(/(\d+)m/);
+  if (mMatch) totalMinutes += parseInt(mMatch[1]);
+  
+  // Парсим дни
+  const dMatch = str.match(/(\d+)d/);
+  if (dMatch) totalMinutes += parseInt(dMatch[1]) * 24 * 60;
+  
+  // Парсим недели
+  const wMatch = str.match(/(\d+)w/);
+  if (wMatch) totalMinutes += parseInt(wMatch[1]) * 7 * 24 * 60;
+  
+  if (totalMinutes === 0) {
+    const num = parseInt(str);
+    if (!isNaN(num)) return num;
+    return null;
+  }
+  return totalMinutes;
 }
+
+// ─── Бан/Разбан ───
 
 async function handleBan(chatId, msg, args, isBusiness) {
   if (args.length < 3) {
-    await bot.sendMessage(chatId, '❌ Формат: /ban (ID) (ВРЕМЯ) (ПРИЧИНА)\nПример: /ban 123456789 24ч Спам');
+    await bot.sendMessage(chatId, '❌ Формат: .ban (ID) (ВРЕМЯ) (ПРИЧИНА)\nПримеры:\n.ban 123456789 30m Спам\n.ban 123456789 -1w Навсегда');
     return;
   }
 
@@ -317,44 +397,56 @@ async function handleBan(chatId, msg, args, isBusiness) {
   const durationStr = args[1];
   const reason = args.slice(2).join(' ');
 
-  const durationMs = parseDuration(durationStr);
-  if (!durationMs) {
-    await bot.sendMessage(chatId, '❌ Неверный формат времени. Примеры: 30м, 2ч, 1д');
+  const minutes = parseDuration(durationStr);
+  if (minutes === null) {
+    await bot.sendMessage(chatId, '❌ Неверный формат времени. Примеры: 30m, 2h, 1h30m, 7d, -1w');
     return;
   }
 
   const now = new Date();
-  const unbanAt = new Date(now.getTime() + durationMs);
+  let unbanAt = null;
+  let forever = false;
+
+  if (minutes === -1) {
+    forever = true;
+  } else {
+    unbanAt = new Date(now.getTime() + minutes * 60000);
+  }
 
   try {
-    await supabase
-      .from('bot_bans')
-      .upsert({
-        user_id: targetId,
-        reason: reason,
-        ban_duration: durationStr,
-        banned_at: now.toISOString(),
-        unban_at: unbanAt.toISOString(),
-        active: true
-      }, { onConflict: 'user_id' });
+    const bans = await readJSON(DATA_FILES.bans);
+    const newBan = {
+      user_id: targetId,
+      reason: reason,
+      duration: durationStr,
+      banned_at: now.toISOString(),
+      unban_at: forever ? null : unbanAt.toISOString(),
+      forever: forever,
+      issued_by: msg.from.id
+    };
+    
+    // Удаляем старый бан
+    const filtered = bans.filter(b => b.user_id !== targetId);
+    filtered.push(newBan);
+    await writeJSON(DATA_FILES.bans, filtered);
 
-    const banMsg = `✅ ПОЛЬЗОВАТЕЛЬ ЗАБАНЕН
-
-🆔 ID: <code>${targetId}</code>
-📌 Причина: ${reason}
-⏱ Время: ${durationStr}
-🕐 Дата: ${moscowTime()}
-⏳ Бан активен до: ${unbanAt.toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })}`;
+    let banMsg = `✅ ПОЛЬЗОВАТЕЛЬ ЗАБАНЕН\n\n🆔 ID: <code>${targetId}</code>\n📌 Причина: ${reason}\n🕐 Дата: ${moscowTime()}`;
+    if (forever) {
+      banMsg += `\n⏳ БАН НАВСЕГДА`;
+    } else {
+      banMsg += `\n⏱ Время: ${durationStr}\n⏳ Бан активен до: ${unbanAt.toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })}`;
+    }
 
     await bot.sendMessage(chatId, banMsg, { parse_mode: 'HTML' });
 
+    // Уведомляем пользователя
     try {
-      const notifyMsg = `⛔ ВАС ЗАБЛОКИРОВАЛИ В БОТЕ
-
-📌 Причина: ${reason}
-⏱ Длительность: ${durationStr}
-🕐 Дата блокировки: ${moscowTime()}
-⏳ Разблокировка: ${unbanAt.toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })}`;
+      let notifyMsg = `⛔ ВАС ЗАБЛОКИРОВАЛИ В БОТЕ\n\n📌 Причина: ${reason}`;
+      if (forever) {
+        notifyMsg += `\n⏳ БАН НАВСЕГДА`;
+      } else {
+        notifyMsg += `\n⏱ Длительность: ${durationStr}\n⏳ Разблокировка: ${unbanAt.toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })}`;
+      }
       await bot.sendMessage(targetId, notifyMsg, { parse_mode: 'HTML' });
     } catch (e) { }
   } catch (e) {
@@ -364,7 +456,7 @@ async function handleBan(chatId, msg, args, isBusiness) {
 
 async function handleUnban(chatId, msg, args, isBusiness) {
   if (args.length < 2) {
-    await bot.sendMessage(chatId, '❌ Формат: /unban (ID) (ПРИЧИНА)\nПример: /unban 123456789 Ошибка');
+    await bot.sendMessage(chatId, '❌ Формат: .unban (ID) (ПРИЧИНА)\nПример: .unban 123456789 Ошибка');
     return;
   }
 
@@ -372,39 +464,22 @@ async function handleUnban(chatId, msg, args, isBusiness) {
   const reason = args.slice(1).join(' ');
 
   try {
-    const { data } = await supabase
-      .from('bot_bans')
-      .select('*')
-      .eq('user_id', targetId)
-      .eq('active', true)
-      .maybeSingle();
-
-    if (!data) {
+    const bans = await readJSON(DATA_FILES.bans);
+    const filtered = bans.filter(b => b.user_id !== targetId);
+    
+    if (filtered.length === bans.length) {
       await bot.sendMessage(chatId, `⛔ Данный ${targetId} не заблокирован.`);
       return;
     }
 
-    await supabase
-      .from('bot_bans')
-      .update({ active: false })
-      .eq('user_id', targetId)
-      .eq('active', true);
+    await writeJSON(DATA_FILES.bans, filtered);
 
-    const unbanMsg = `✅ ПОЛЬЗОВАТЕЛЬ РАЗБАНЕН
-
-🆔 ID: <code>${targetId}</code>
-📌 Причина разбана: ${reason}
-🕐 Дата: ${moscowTime()}
-🔓 Пользователь снова может пользоваться ботом`;
+    const unbanMsg = `✅ ПОЛЬЗОВАТЕЛЬ РАЗБАНЕН\n\n🆔 ID: <code>${targetId}</code>\n📌 Причина разбана: ${reason}\n🕐 Дата: ${moscowTime()}\n🔓 Пользователь снова может пользоваться ботом`;
 
     await bot.sendMessage(chatId, unbanMsg, { parse_mode: 'HTML' });
 
     try {
-      const notifyMsg = `✅ ВАС РАЗБЛОКИРОВАЛИ
-
-📌 Причина разблокировки: ${reason}
-🕐 Дата: ${moscowTime()}
-🔓 Теперь вы снова можете пользоваться ботом`;
+      const notifyMsg = `✅ ВАС РАЗБЛОКИРОВАЛИ\n\n📌 Причина разблокировки: ${reason}\n🕐 Дата: ${moscowTime()}\n🔓 Теперь вы снова можете пользоваться ботом`;
       await bot.sendMessage(targetId, notifyMsg, { parse_mode: 'HTML' });
     } catch (e) { }
   } catch (e) {
@@ -414,38 +489,39 @@ async function handleUnban(chatId, msg, args, isBusiness) {
 
 async function handleChkban(chatId, args) {
   if (args.length < 1) {
-    await bot.sendMessage(chatId, '❌ Формат: /chkban (ID)');
+    await bot.sendMessage(chatId, '❌ Формат: .chkban (ID)');
     return;
   }
 
   const targetId = parseInt(args[0], 10);
 
   try {
-    const now = new Date();
-    const { data } = await supabase
-      .from('bot_bans')
-      .select('*')
-      .eq('user_id', targetId)
-      .eq('active', true)
-      .maybeSingle();
-
-    if (!data || new Date(data.unban_at) < now) {
+    const bans = await readJSON(DATA_FILES.bans);
+    const ban = bans.find(b => b.user_id === targetId);
+    
+    if (!ban) {
       await bot.sendMessage(chatId, `⛔ Данный ${targetId} не заблокирован.`);
       return;
     }
 
-    const remaining = new Date(data.unban_at) - now;
-    const hours = Math.floor(remaining / 3600000);
-    const minutes = Math.floor((remaining % 3600000) / 60000);
-    const seconds = Math.floor((remaining % 60000) / 1000);
+    if (ban.forever) {
+      const chkMsg = `---<code>${targetId}</code>---\n📌Причина: ${ban.reason}\n🕐Дата выдачи: ${new Date(ban.banned_at).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })}\n⏳ БАН НАВСЕГДА`;
+      await bot.sendMessage(chatId, chkMsg, { parse_mode: 'HTML' });
+    } else {
+      const now = new Date();
+      const unbanDate = new Date(ban.unban_at);
+      if (unbanDate < now) {
+        await bot.sendMessage(chatId, `⛔ Данный ${targetId} не заблокирован.`);
+        return;
+      }
+      const remaining = unbanDate - now;
+      const hours = Math.floor(remaining / 3600000);
+      const minutes = Math.floor((remaining % 3600000) / 60000);
+      const seconds = Math.floor((remaining % 60000) / 1000);
 
-    const chkMsg = `---<code>${targetId}</code>---
-📌Причина: ${data.reason}
-🕐Дата выдачи: ${new Date(data.banned_at).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })}
-🕐Дата снятия бана: ${new Date(data.unban_at).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })}
-🔓Осталось до окончания: ${hours}ч ${minutes}м ${seconds}с`;
-
-    await bot.sendMessage(chatId, chkMsg, { parse_mode: 'HTML' });
+      const chkMsg = `---<code>${targetId}</code>---\n📌Причина: ${ban.reason}\n🕐Дата выдачи: ${new Date(ban.banned_at).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })}\n🕐Дата снятия бана: ${unbanDate.toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })}\n🔓Осталось до окончания: ${hours}ч ${minutes}м ${seconds}с`;
+      await bot.sendMessage(chatId, chkMsg, { parse_mode: 'HTML' });
+    }
   } catch (e) {
     await bot.sendMessage(chatId, '❌ Ошибка при проверке бана.');
   }
@@ -453,7 +529,7 @@ async function handleChkban(chatId, args) {
 
 async function handleLogs(chatId, args) {
   if (args.length < 2) {
-    await bot.sendMessage(chatId, '❌ Формат: /logs (ID) (количество)\nПример: /logs 123456789 10');
+    await bot.sendMessage(chatId, '❌ Формат: .logs (ID) (количество)\nПример: .logs 123456789 10');
     return;
   }
 
@@ -461,21 +537,17 @@ async function handleLogs(chatId, args) {
   const limit = Math.min(parseInt(args[1], 10) || 10, 100);
 
   try {
-    const { data, error } = await supabase
-      .from('bot_logs')
-      .select('*')
-      .eq('user_id', targetId)
-      .order('created_at', { ascending: false })
-      .limit(limit);
+    const logs = await readJSON(DATA_FILES.logs);
+    const userLogs = (logs[targetId] || []).slice(-limit).reverse();
 
-    if (error || !data || data.length === 0) {
+    if (userLogs.length === 0) {
       await bot.sendMessage(chatId, '📭 Логи не найдены для данного ID.');
       return;
     }
 
-    let logsText = `📋 Логи пользователя <code>${targetId}</code> (последние ${data.length})\n\n`;
-    for (const log of data) {
-      logsText += `📝 ${log.command}\n🕐 ${new Date(log.created_at).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })}\n\n`;
+    let logsText = `📋 Логи пользователя <code>${targetId}</code> (последние ${userLogs.length})\n\n`;
+    for (const log of userLogs) {
+      logsText += `📝 ${log.command}\n🕐 ${new Date(log.time).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })}\n\n`;
     }
 
     if (logsText.length > 4096) {
@@ -493,20 +565,18 @@ async function handleLogs(chatId, args) {
 
 async function handleIdlist(chatId) {
   try {
-    const { data, error } = await supabase
-      .from('bot_users')
-      .select('*')
-      .order('last_seen', { ascending: false });
+    const users = await readJSON(DATA_FILES.users);
+    const entries = Object.entries(users);
 
-    if (error || !data || data.length === 0) {
+    if (entries.length === 0) {
       await bot.sendMessage(chatId, '📭 Список ID пуст.');
       return;
     }
 
-    let listText = `📋 Список пользователей (${data.length})\n\n`;
-    for (const user of data) {
-      const uname = user.username ? `@${user.username}` : 'нет username';
-      listText += `👤 ${uname} → <code>${user.user_id}</code>\n`;
+    let listText = `📋 Список пользователей (${entries.length})\n\n`;
+    for (const [id, data] of entries) {
+      const uname = data.username ? `@${data.username}` : 'нет username';
+      listText += `👤 ${uname} → <code>${id}</code>\n`;
     }
 
     if (listText.length > 4096) {
@@ -533,11 +603,13 @@ async function handleKey(chatId) {
 
     const expiresAt = new Date(Date.now() + 10 * 3600000);
 
-    await supabase.from('bot_keys').insert({
-      key: key,
+    const keys = await readJSON(DATA_FILES.keys);
+    keys[key] = {
+      created_at: new Date().toISOString(),
       expires_at: expiresAt.toISOString(),
       active: true
-    });
+    };
+    await writeJSON(DATA_FILES.keys, keys);
 
     const keyMsg = `🔑 Ключ доступа сгенерирован
 
@@ -556,7 +628,7 @@ async function handleKey(chatId) {
 
 async function handleTex(chatId, args) {
   if (args.length < 1) {
-    await bot.sendMessage(chatId, '❌ Формат: /tex on (время) или /tex off');
+    await bot.sendMessage(chatId, '❌ Формат: .tex on (время) или .tex off');
     return;
   }
 
@@ -564,17 +636,17 @@ async function handleTex(chatId, args) {
 
   if (subCmd === 'on') {
     if (args.length < 2) {
-      await bot.sendMessage(chatId, '❌ Укажите время: /tex on 2ч');
+      await bot.sendMessage(chatId, '❌ Укажите время: .tex on 30');
       return;
     }
 
-    const durationMs = parseDuration(args[1]);
-    if (!durationMs) {
-      await bot.sendMessage(chatId, '❌ Неверный формат времени. Примеры: 30м, 2ч, 1д');
+    const minutes = parseInt(args[1]);
+    if (isNaN(minutes) || minutes <= 0) {
+      await bot.sendMessage(chatId, '❌ Неверный формат времени. Укажите минуты.');
       return;
     }
 
-    const until = new Date(Date.now() + durationMs);
+    const until = new Date(Date.now() + minutes * 60000);
     await setTechWorks(true, until.toISOString());
 
     await bot.sendMessage(chatId, `✅ ТЕХ-РАБОТЫ УСПЕШНО ВКЛЮЧЕНЫ\n🕐 Время работ: ${until.toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })}`);
@@ -582,7 +654,7 @@ async function handleTex(chatId, args) {
     await setTechWorks(false, null);
     await bot.sendMessage(chatId, '✅ ТЕХ-РАБОТЫ УСПЕШНО ВЫКЛЮЧЕНЫ');
   } else {
-    await bot.sendMessage(chatId, '❌ Используйте: /tex on (время) или /tex off');
+    await bot.sendMessage(chatId, '❌ Используйте: .tex on (минуты) или .tex off');
   }
 }
 
@@ -602,30 +674,46 @@ async function processBusinessCommand(chatId, text, userId, username, firstName,
     return true;
   }
 
+  const ban = await isBanned(userId);
+  if (ban && !isAdmin(userId)) {
+    await tryDeleteMessage(chatId, msg.message_id);
+    let banMsg = `⛔ ВАС ЗАБЛОКИРОВАЛИ В БОТЕ\n\n📌 Причина: ${ban.reason}`;
+    if (ban.forever) {
+      banMsg += `\n⏳ БАН НАВСЕГДА`;
+    } else {
+      banMsg += `\n⏳ Разблокировка: ${new Date(ban.unban_at).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })}`;
+    }
+    await bot.sendMessage(chatId, banMsg);
+    return true;
+  }
+
   switch (cmd) {
     case 'help':
       await tryDeleteMessage(chatId, msg.message_id);
       await bot.sendMessage(chatId, helpText);
       return true;
 
-    case 'info':
+    case 'whois':
+      if (args.length < 2) {
+        await bot.sendMessage(chatId, '❌ Укажите тип и данные для пробива.\n\nПримеры:\n.whois ip 8.8.8.8\n.whois n +79991234567\n.whois qz @username');
+        return true;
+      }
       await tryDeleteMessage(chatId, msg.message_id);
-      await sendProcessingAnimation(chatId, 'ОБРАБОТКА ЗАПРОСА');
-      await bot.sendMessage(chatId, formatResult1(args.join(' ') || 'нет данных'), { parse_mode: 'HTML' });
-      await logCommand(userId, username, text);
-      return true;
-
-    case 'check':
-      await tryDeleteMessage(chatId, msg.message_id);
-      await sendProcessingAnimation(chatId, 'ПРОВЕРКА ДАННЫХ');
-      await bot.sendMessage(chatId, formatResult2(args.join(' ') || 'нет данных'), { parse_mode: 'HTML' });
-      await logCommand(userId, username, text);
-      return true;
-
-    case 'report':
-      await tryDeleteMessage(chatId, msg.message_id);
-      await sendProcessingAnimation(chatId, 'ФОРМИРОВАНИЕ ОТЧЁТА');
-      await bot.sendMessage(chatId, formatResult3(args.join(' ') || 'нет данных'), { parse_mode: 'HTML' });
+      const type = args[0];
+      const data = args.slice(1).join(' ');
+      
+      if (type === 'ip') {
+        await sendProcessingAnimation(chatId, 'ПРОВЕРКА IP');
+        await bot.sendMessage(chatId, formatResult1(data), { parse_mode: 'HTML' });
+      } else if (type === 'n') {
+        await sendProcessingAnimation(chatId, 'ПРОВЕРКА НОМЕРА');
+        await bot.sendMessage(chatId, formatResult2(data), { parse_mode: 'HTML' });
+      } else if (type === 'qz') {
+        await sendProcessingAnimation(chatId, 'ПРОВЕРКА USERNAME');
+        await bot.sendMessage(chatId, formatResult3(data), { parse_mode: 'HTML' });
+      } else {
+        await bot.sendMessage(chatId, '❌ Неверный тип. Используйте: ip, n, qz');
+      }
       await logCommand(userId, username, text);
       return true;
 
@@ -693,14 +781,20 @@ async function processDmCommand(chatId, text, userId, username, firstName, msg) 
   const args = parts.slice(1);
 
   const techWorks = await getTechWorks();
-  if (techWorks.active && !isAdmin(userId) && cmd !== 'tex') {
+  if (techWorks.active && !isAdmin(userId)) {
     await bot.sendMessage(chatId, `🛠️ БОТ НА ТЕХНИЧЕСКИХ РАБОТАХ\n\n🕐 ВРЕМЯ: ${new Date(techWorks.until).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })}`);
     return true;
   }
 
   const ban = await isBanned(userId);
   if (ban && !isAdmin(userId)) {
-    await bot.sendMessage(chatId, `⛔ Вы заблокированы в боте.\n\n📌 Причина: ${ban.reason}\n⏳ Разблокировка: ${new Date(ban.unban_at).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })}`);
+    let banMsg = `⛔ ВЫ ЗАБЛОКИРОВАНЫ В БОТЕ\n\n📌 Причина: ${ban.reason}`;
+    if (ban.forever) {
+      banMsg += `\n⏳ БАН НАВСЕГДА`;
+    } else {
+      banMsg += `\n⏳ Разблокировка: ${new Date(ban.unban_at).toLocaleString('ru-RU', { timeZone: 'Europe/Moscow' })}`;
+    }
+    await bot.sendMessage(chatId, banMsg);
     return true;
   }
 
@@ -786,17 +880,15 @@ bot.on('message', async (msg) => {
     const funcId = awaitingInput.get(userId);
     awaitingInput.delete(userId);
 
-    await tryDeleteMessage(chatId, msg.message_id);
-
     let headerText, resultText;
     if (funcId === 'func1') {
-      headerText = 'ОБРАБОТКА ЗАПРОСА';
+      headerText = 'ПРОВЕРКА IP';
       resultText = formatResult1(text);
     } else if (funcId === 'func2') {
-      headerText = 'ПРОВЕРКА ДАННЫХ';
+      headerText = 'ПРОВЕРКА НОМЕРА';
       resultText = formatResult2(text);
     } else if (funcId === 'func3') {
-      headerText = 'ФОРМИРОВАНИЕ ОТЧЁТА';
+      headerText = 'ПРОВЕРКА USERNAME';
       resultText = formatResult3(text);
     }
 
@@ -808,8 +900,8 @@ bot.on('message', async (msg) => {
 
   if (!text) return;
 
-  // Бизнес-команды (в приватных чатах через Business API)
-  if (chatType === 'private' && text.startsWith('.')) {
+  // Бизнес-команды
+  if (text.startsWith('.')) {
     await processBusinessCommand(chatId, text, userId, username, firstName, msg);
     return;
   }
@@ -830,9 +922,9 @@ bot.on('callback_query', async (query) => {
   const msgId = query.message.message_id;
 
   const funcMap = {
-    'func1': { text: 'Функция 1', id: 'func1' },
-    'func2': { text: 'Функция 2', id: 'func2' },
-    'func3': { text: 'Функция 3', id: 'func3' }
+    'func1': { text: 'Пробив IP', id: 'func1' },
+    'func2': { text: 'Пробив номера', id: 'func2' },
+    'func3': { text: 'Пробив юзера (@)', id: 'func3' }
   };
 
   if (funcMap[data]) {
@@ -857,6 +949,8 @@ bot.on('callback_query', async (query) => {
 // ─── Запуск ───
 
 async function startup() {
+  console.log('Инициализация файлов...');
+  await initFiles();
   console.log('Бот запущен...');
   await checkExpiredBans();
   const tech = await getTechWorks();
@@ -864,6 +958,7 @@ async function startup() {
     console.log('Тех-работы активны до:', tech.until);
   }
   console.log('Админ ID:', ADMIN_ID);
+  console.log('Бот готов к работе!');
 }
 
 startup();
